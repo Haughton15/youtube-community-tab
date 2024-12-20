@@ -51,7 +51,6 @@ class Post(object):
     @staticmethod
     def from_post_id(post_id, expire_after=0):
         headers = {"Referer": Post.FORMAT_URLS["POST"].format(post_id)}
-
         # Add authorization header
         current_cookies = dict_from_cookiejar(requests_cache.cookies)
         if "SAPISID" in current_cookies:
@@ -125,104 +124,175 @@ class Post(object):
         if "SAPISID" in current_cookies:
             headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
 
-        if self.comments_continuation_token is None:
-            try:
-                r = requests_cache.get(Post.FORMAT_URLS["POST"].format(self.post_id), expire_after=expire_after, headers=headers)
+        while self.comments_continuation_token is not False:
+            if self.comments_continuation_token is None:
+                try:
+                    r = requests_cache.get(Post.FORMAT_URLS["POST"].format(self.post_id), expire_after=expire_after, headers=headers)
+                    m = re.findall(Post.REGEX["YT_INITIAL_DATA"], r.text)
+                    data = json.loads(m[0])
 
-                m = re.findall(Post.REGEX["YT_INITIAL_DATA"], r.text)
-                data = json.loads(m[0])
+                    self.get_first_continuation_token(data)
+                    self.get_click_tracking_params(data)
+                    self.visitor_data = data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
+                    self.session_index = str(safely_get_value_from_key(data, "responseContext", "webResponseContextExtensionData", "ytConfigData", "sessionIndex"))
 
-                self.get_first_continuation_token(data)
-                self.get_click_tracking_params(data)
-                self.visitor_data = data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
-                self.session_index = str(safely_get_value_from_key(data, "responseContext", "webResponseContextExtensionData", "ytConfigData", "sessionIndex"))
-                self.load_comments(expire_after=expire_after)
-            except Exception as e:
-                print("[Some non-expected exception, probably caused by requests...]")
-                raise e
-        elif self.comments_continuation_token is not False:
-            headers.update(
-                {
-                    "X-Goog-AuthUser": self.session_index,
-                    "X-Origin": "https://www.youtube.com",
-                    "X-Youtube-Client-Name": "1",
-                    "X-Youtube-Client-Version": CLIENT_VERSION,
-                }
-            )
-
-            json_body = {
-                "context": {
-                    "client": {
-                        "clientName": "WEB",
-                        "clientVersion": CLIENT_VERSION,
-                        "originalUrl": Post.FORMAT_URLS["POST"].format(self.post_id),
-                        "visitorData": self.visitor_data,
-                    }
-                },
-                "continuation": self.comments_continuation_token,
-                "clickTracking": {"clickTrackingParams": self.click_tracking_params},
-            }
-
-            r = requests_cache.post(Post.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
-
-            data = r.json()
-            if self.first:
-                if "continuationItems" not in data["onResponseReceivedEndpoints"][1]["reloadContinuationItemsCommand"]:
-                    # There are no comments
-                    continuation_items = []
-                else:
-                    append = data["onResponseReceivedEndpoints"][1]["reloadContinuationItemsCommand"]
-                    continuation_items = safely_get_value_from_key(append, "continuationItems", default=[])
-                    self.first = False
+                except Exception as e:
+                    print(f"[Error inesperado: {str(e)}]")
+                    raise e
             else:
-                append = data["onResponseReceivedEndpoints"][0]["appendContinuationItemsAction"]
-                continuation_items = safely_get_value_from_key(append, "continuationItems", default=[])
+                headers.update(
+                    {
+                        "X-Goog-AuthUser": self.session_index,
+                        "X-Origin": "https://www.youtube.com",
+                        "X-Youtube-Client-Name": "1",
+                        "X-Youtube-Client-Version": CLIENT_VERSION,
+                    }
+                )
 
-            self.click_tracking_params = data["trackingParams"]
-            self.append_comments_from_items(continuation_items)
+                json_body = {
+                    "context": {
+                        "client": {
+                            "clientName": "WEB",
+                            "clientVersion": CLIENT_VERSION,
+                            "originalUrl": Post.FORMAT_URLS["POST"].format(self.post_id),
+                            "visitorData": self.visitor_data,
+                        }
+                    },
+                    "continuation": self.comments_continuation_token,
+                    "clickTracking": {"clickTrackingParams": self.click_tracking_params},
+                }
+
+                r = requests_cache.post(Post.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
+                data = r.json()
+
+                if "onResponseReceivedEndpoints" in data:
+                    if self.first:
+                        reload_data = safely_get_value_from_key(data, "onResponseReceivedEndpoints", 1, "reloadContinuationItemsCommand", default={})
+                        continuation_items = safely_get_value_from_key(reload_data, "continuationItems", default=[])
+                        self.first = False
+                    else:
+                        append_data = safely_get_value_from_key(data, "onResponseReceivedEndpoints", 0, "appendContinuationItemsAction", default={})
+                        continuation_items = safely_get_value_from_key(append_data, "continuationItems", default=[])
+
+                    self.click_tracking_params = data.get("trackingParams", "")
+                    print(f"Continuations cargadas: {len(continuation_items)}")
+                    self.append_comments_from_items(continuation_items)
+                else:
+                    print("[Error] Respuesta inesperada de la API")
+                    break
 
     def append_comments_from_items(self, items):
+        if not items:
+            print("[Debug] No items found")
+            return
+
         there_is_no_continuation_token = True
+
         for item in items:
             kind = list(item.keys())[0]
+            print(f"[Debug] Tipo de elemento encontrado: {kind}")
 
             if kind == "commentThreadRenderer":
+                # Procesar comentario principal
+                comment_renderer = safely_get_value_from_key(
+                    item[kind], 
+                    "commentViewModel", 
+                    "commentViewModel"
+                )
+
+                if not comment_renderer:
+                    print(f"[Error] Datos faltantes en comentario principal: {item}")
+                    continue
+
                 self.comments.append(
                     Comment.from_data(
-                        item[kind]["comment"]["commentRenderer"],
+                        comment_renderer,
                         self.post_id,
                         self.channel_id,
-                        safely_get_value_from_key(
-                            item[kind],
-                            "replies",
-                            "commentRepliesRenderer",
-                            "contents",
-                            0,
-                            "continuationItemRenderer",
-                            "continuationEndpoint",
-                            "continuationCommand",
-                            "token",
-                        ),
-                        safely_get_value_from_key(
-                            item[kind],
-                            "replies",
-                            "commentRepliesRenderer",
-                            "contents",
-                            0,
-                            "continuationItemRenderer",
-                            "continuationEndpoint",
-                            "clickTrackingParams",
-                        ),
+                        None,  # No hay token de continuación directo
+                        None,  # No hay clickTrackingParams
                         self.visitor_data,
                         self.session_index,
                     )
                 )
+                print(f"[Debug] Comentario principal agregado: {comment_renderer}")
+
+                # Procesar respuestas
+                replies = safely_get_value_from_key(
+                    item[kind], 
+                    "replies", 
+                    "commentRepliesRenderer", 
+                    "contents"
+                )
+
+                if replies:
+                    print(f"[Debug] Respuestas encontradas ({len(replies)}):")
+                    self.append_replies_from_items(replies)
+
             elif kind == "continuationItemRenderer":
-                self.comments_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
+                # Extraer token de continuación principal
+                self.comments_continuation_token = safely_get_value_from_key(
+                    item[kind], 
+                    "continuationEndpoint", 
+                    "continuationCommand", 
+                    "token"
+                )
                 there_is_no_continuation_token = False
+                print(f"[Debug] Nueva continuación principal detectada: {self.comments_continuation_token}")
 
         if there_is_no_continuation_token:
             self.comments_continuation_token = False
+            print("[Info] No se encontró ningún token de continuación")
+
+    # Nueva función para manejar comentarios de respuestas
+    def append_replies_from_items(self, replies):
+        if not replies:
+            print("[Debug] No se encontraron respuestas")
+            return
+
+        print(f"[Debug] Procesando {len(replies)} respuestas")
+        
+        for reply_item in replies:
+            kind = list(reply_item.keys())[0]
+            print(f"[Debug] Tipo de respuesta encontrada: {kind}")
+
+            if kind == "commentThreadRenderer" or kind == "commentRenderer":
+                # Maneja respuestas normales
+                comment_renderer = safely_get_value_from_key(
+                    reply_item[kind], 
+                    "commentViewModel", 
+                    "commentViewModel"
+                )
+
+                if not comment_renderer:
+                    print(f"[Error] Datos faltantes en respuesta: {reply_item}")
+                    continue
+
+                # Agrega la respuesta a la lista de comentarios
+                self.comments.append(
+                    Comment.from_data(
+                        comment_renderer,
+                        self.post_id,
+                        self.channel_id,
+                        None,  # No hay token de continuación directo en respuestas
+                        None,  # No hay clickTrackingParams en respuestas
+                        self.visitor_data,
+                        self.session_index,
+                    )
+                )
+                print(f"[Debug] Respuesta agregada: {comment_renderer}")
+
+            elif kind == "continuationItemRenderer":
+                # Extraer el token de continuación de respuestas
+                continuation_token = safely_get_value_from_key(
+                    reply_item[kind], 
+                    "continuationEndpoint", 
+                    "continuationCommand", 
+                    "token"
+                )
+                if continuation_token:
+                    self.comments_continuation_token = continuation_token
+                    print(f"[Debug] Nuevo token de continuación para respuestas: {continuation_token}")
 
     def get_text(self):
         runs = safely_get_value_from_key(self.content_text, "runs", default=[])

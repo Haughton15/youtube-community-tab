@@ -1,6 +1,68 @@
-*/__pycache__/*
-*/*.egg-info/*
+# Ignorar carpetas y archivos de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 *.sqlite
-build/*
-dist/*
+
+# Entornos virtuales
+venv/
+.env/
+.env.local
+env/
+venv.bak/
+pip-log.txt
+
+# Archivos de configuración y caché de pip
+pipfile
+pipfile.lock
+*.env
+
+# Archivos generados por setuptools y distribución
+*.egg-info/
+build/
+dist/
+*.egg
+*.whl
+
+# Archivos de compilación
+*.so
+*.c
+*.o
+
+# Archivos de logs
+*.log
+debug.log
+
+# Archivos de test y datos de ejemplo
 tests/cookies.txt
+
+# Ignorar dependencias de FastAPI y otros paquetes
+poetry.lock
+poetry.toml
+Pipfile
+Pipfile.lock
+requirements.txt
+
+# Ignorar configuraciones de Docker (si las usas)
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Archivos de Git
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Archivos relacionados con documentación y generación de código
+docs/_build/
+htmlcov/
+coverage.xml
+
+# Archivos de ejecución y entornos locales
+*.pid
+celerybeat-schedule
+
+# Archivos del entorno de desarrollo
+*.envrc
+*.code-workspace
