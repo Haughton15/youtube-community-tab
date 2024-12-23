@@ -256,8 +256,8 @@ class Post(object):
             kind = list(reply_item.keys())[0]
             print(f"[Debug] Tipo de respuesta encontrada: {kind}")
 
-            if kind == "commentThreadRenderer" or kind == "commentRenderer":
-                # Maneja respuestas normales
+            if kind == "commentRenderer":
+                # Manejar respuestas normales
                 comment_renderer = safely_get_value_from_key(
                     reply_item[kind], 
                     "commentViewModel", 
@@ -291,8 +291,42 @@ class Post(object):
                     "token"
                 )
                 if continuation_token:
-                    self.comments_continuation_token = continuation_token
                     print(f"[Debug] Nuevo token de continuación para respuestas: {continuation_token}")
+                    self.comments_continuation_token = continuation_token
+                    self.load_more_replies(continuation_token)
+            else:
+                print('\n')
+                print('ReplyItem: ')
+                print(reply_item)
+                print('\n')
+
+    def load_more_replies(self, continuation_token):
+        headers = {
+            "X-Goog-AuthUser": self.session_index,
+            "X-Origin": "https://www.youtube.com",
+            "X-Youtube-Client-Name": "1",
+            "X-Youtube-Client-Version": CLIENT_VERSION,
+        }
+        json_body = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": CLIENT_VERSION,
+                    "originalUrl": Post.FORMAT_URLS["POST"].format(self.post_id),
+                    "visitorData": self.visitor_data,
+                }
+            },
+            "continuation": continuation_token,
+            "clickTracking": {"clickTrackingParams": self.click_tracking_params},
+        }
+        r = requests_cache.post(Post.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, headers=headers)
+        data = r.json()
+
+        replies = safely_get_value_from_key(
+            data, "onResponseReceivedEndpoints", 0, "appendContinuationItemsAction", "continuationItems", default=[]
+        )
+        if replies:
+            self.append_replies_from_items(replies)
 
     def get_text(self):
         runs = safely_get_value_from_key(self.content_text, "runs", default=[])
