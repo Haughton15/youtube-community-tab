@@ -119,7 +119,7 @@ class Post(object):
     def load_comments(self, expire_after=0):
         headers = {"Referer": Post.FORMAT_URLS["POST"].format(self.post_id)}
 
-        # Add authorization header
+        # Agregar autorización
         current_cookies = dict_from_cookiejar(requests_cache.cookies)
         if "SAPISID" in current_cookies:
             headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
@@ -183,7 +183,7 @@ class Post(object):
 
     def append_comments_from_items(self, items):
         if not items:
-            print("[Debug] No items found")
+            print("[Debug] No se encontraron elementos")
             return
 
         there_is_no_continuation_token = True
@@ -199,134 +199,35 @@ class Post(object):
                     "commentViewModel", 
                     "commentViewModel"
                 )
-
                 if not comment_renderer:
                     print(f"[Error] Datos faltantes en comentario principal: {item}")
                     continue
 
-                self.comments.append(
-                    Comment.from_data(
-                        comment_renderer,
-                        self.post_id,
-                        self.channel_id,
-                        None,  # No hay token de continuación directo
-                        None,  # No hay clickTrackingParams
-                        self.visitor_data,
-                        self.session_index,
-                    )
+                comment = Comment.from_data(
+                    comment_renderer,
+                    self.post_id,
+                    self.channel_id,
+                    None,
+                    None,
+                    self.visitor_data,
+                    self.session_index,
                 )
-                print(f"[Debug] Comentario principal agregado: {comment_renderer}")
+                self.comments.append(comment)
+                print(f"[Debug] Comentario principal agregado: {comment.comment_id}")
 
-                # Procesar respuestas
-                replies = safely_get_value_from_key(
-                    item[kind], 
-                    "replies", 
-                    "commentRepliesRenderer", 
-                    "contents"
-                )
-
-                if replies:
-                    print(f"[Debug] Respuestas encontradas ({len(replies)}):")
-                    self.append_replies_from_items(replies)
+                # Cargar respuestas del comentario
+                comment.load_replies()  # Utiliza la función definida en comment.py
 
             elif kind == "continuationItemRenderer":
-                # Extraer token de continuación principal
                 self.comments_continuation_token = safely_get_value_from_key(
-                    item[kind], 
-                    "continuationEndpoint", 
-                    "continuationCommand", 
-                    "token"
+                    item[kind], "continuationEndpoint", "continuationCommand", "token"
                 )
                 there_is_no_continuation_token = False
-                print(f"[Debug] Nueva continuación principal detectada: {self.comments_continuation_token}")
+                print(f"[Debug] Nueva continuación detectada: {self.comments_continuation_token}")
 
         if there_is_no_continuation_token:
             self.comments_continuation_token = False
             print("[Info] No se encontró ningún token de continuación")
-
-    # Nueva función para manejar comentarios de respuestas
-    def append_replies_from_items(self, replies):
-        if not replies:
-            print("[Debug] No se encontraron respuestas")
-            return
-
-        print(f"[Debug] Procesando {len(replies)} respuestas")
-        
-        for reply_item in replies:
-            kind = list(reply_item.keys())[0]
-            print(f"[Debug] Tipo de respuesta encontrada: {kind}")
-
-            if kind == "commentRenderer":
-                # Manejar respuestas normales
-                comment_renderer = safely_get_value_from_key(
-                    reply_item[kind], 
-                    "commentViewModel", 
-                    "commentViewModel"
-                )
-
-                if not comment_renderer:
-                    print(f"[Error] Datos faltantes en respuesta: {reply_item}")
-                    continue
-
-                # Agrega la respuesta a la lista de comentarios
-                self.comments.append(
-                    Comment.from_data(
-                        comment_renderer,
-                        self.post_id,
-                        self.channel_id,
-                        None,  # No hay token de continuación directo en respuestas
-                        None,  # No hay clickTrackingParams en respuestas
-                        self.visitor_data,
-                        self.session_index,
-                    )
-                )
-                print(f"[Debug] Respuesta agregada: {comment_renderer}")
-
-            elif kind == "continuationItemRenderer":
-                # Extraer el token de continuación de respuestas
-                continuation_token = safely_get_value_from_key(
-                    reply_item[kind], 
-                    "continuationEndpoint", 
-                    "continuationCommand", 
-                    "token"
-                )
-                if continuation_token:
-                    print(f"[Debug] Nuevo token de continuación para respuestas: {continuation_token}")
-                    self.comments_continuation_token = continuation_token
-                    self.load_more_replies(continuation_token)
-            else:
-                print('\n')
-                print('ReplyItem: ')
-                print(reply_item)
-                print('\n')
-
-    def load_more_replies(self, continuation_token):
-        headers = {
-            "X-Goog-AuthUser": self.session_index,
-            "X-Origin": "https://www.youtube.com",
-            "X-Youtube-Client-Name": "1",
-            "X-Youtube-Client-Version": CLIENT_VERSION,
-        }
-        json_body = {
-            "context": {
-                "client": {
-                    "clientName": "WEB",
-                    "clientVersion": CLIENT_VERSION,
-                    "originalUrl": Post.FORMAT_URLS["POST"].format(self.post_id),
-                    "visitorData": self.visitor_data,
-                }
-            },
-            "continuation": continuation_token,
-            "clickTracking": {"clickTrackingParams": self.click_tracking_params},
-        }
-        r = requests_cache.post(Post.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, headers=headers)
-        data = r.json()
-
-        replies = safely_get_value_from_key(
-            data, "onResponseReceivedEndpoints", 0, "appendContinuationItemsAction", "continuationItems", default=[]
-        )
-        if replies:
-            self.append_replies_from_items(replies)
 
     def get_text(self):
         runs = safely_get_value_from_key(self.content_text, "runs", default=[])
