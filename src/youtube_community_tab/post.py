@@ -116,7 +116,7 @@ class Post(object):
             1
         ]["itemSectionRenderer"]["contents"][0]["continuationItemRenderer"]["continuationEndpoint"]["clickTrackingParams"]
 
-    def load_comments(self, expire_after=0):
+    def load_comments(self, expire_after=0, internal=True):
         headers = {"Referer": Post.FORMAT_URLS["POST"].format(self.post_id)}
 
         # Agregar autorización
@@ -164,6 +164,9 @@ class Post(object):
 
                 r = requests_cache.post(Post.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
                 data = r.json()
+
+                if internal: 
+                    return data
 
                 if "onResponseReceivedEndpoints" in data:
                     if self.first:

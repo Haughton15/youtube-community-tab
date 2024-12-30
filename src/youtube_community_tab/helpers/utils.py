@@ -17,6 +17,27 @@ def safely_get_value_from_key(*args, default=None):
 
     return obj
 
+def parse_count_text(text: str) -> int:
+    """
+    Convierte un texto como '1.7 K', '3.5 M' o '10' a un número entero.
+    
+    Args:
+        text (str): El texto a convertir.
+
+    Returns:
+        int: El valor numérico convertido.
+    """
+    text = text.replace("\xa0", "").strip()  # Eliminar caracteres especiales como '\xa0'
+
+    if 'K' in text:  # Miles
+        return int(float(text.replace('K', '')) * 1000)
+    elif 'M' in text:  # Millones
+        return int(float(text.replace('M', '')) * 1000000)
+    elif 'B' in text:  # Billones (opcional)
+        return int(float(text.replace('B', '')) * 1000000000)
+    else:
+        return int(text)  # Si es un número entero normal
+
 
 def safely_pop_value_from_key(*args):
     obj = args[0]
